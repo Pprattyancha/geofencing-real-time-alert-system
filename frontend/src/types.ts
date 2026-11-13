@@ -1,6 +1,0 @@
-export type Coordinate = [number, number]
-export type Geofence = { id: string; name: string; description?: string; coordinates: Coordinate[]; category: string; status?: string; created_at?: string }
-export type Vehicle = { id: string; vehicle_number: string; driver_name: string; vehicle_type: string; phone: string; status?: string }
-export type AlertRule = { alert_id: string; geofence_id: string; geofence_name?: string; vehicle_id?: string; vehicle_number?: string; event_type: string; status?: string; created_at?: string }
-export type Violation = { id: string; vehicle_id: string; vehicle_number?: string; geofence_id: string; geofence_name?: string; event_type: string; latitude: number; longitude: number; timestamp: string }
-export type LiveAlert = { event_id?: string; event_type: string; timestamp: string; vehicle: { vehicle_id: string; vehicle_number: string; driver_name?: string }; geofence: { geofence_id: string; geofence_name: string; category: string }; location: { latitude: number; longitude: number } }
