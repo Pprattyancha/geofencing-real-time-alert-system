@@ -27,18 +27,28 @@ type Server struct {
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
+
 	r.Use(cors)
+
 	r.Get("/health", s.health)
+
+	// WebSocket alerts endpoint
 	r.Get("/ws/alerts", s.Hub.ServeHTTP)
+
 	r.Post("/geofences", s.createGeofence)
 	r.Get("/geofences", s.listGeofences)
+
 	r.Post("/vehicles", s.createVehicle)
 	r.Get("/vehicles", s.listVehicles)
+
 	r.Post("/vehicles/location", s.updateLocation)
 	r.Get("/vehicles/location/{vehicle_id}", s.getLocation)
+
 	r.Post("/alerts/configure", s.configureAlert)
 	r.Get("/alerts", s.listAlerts)
+
 	r.Get("/violations/history", s.history)
+
 	return r
 }
 func cors(next http.Handler) http.Handler {
