@@ -19,20 +19,24 @@ import (
 )
 
 func main() {
-	// Load .env from the project root.
+	// Load .env file locally.
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: .env file not found. Using system environment variables.")
 	}
 
-	// Load configuration.
+	// Load application configuration.
 	cfg := config.Load()
 
 	if cfg.DatabaseURL == "" {
-		log.Fatal("DATABASE_URL is missing. Add it to your .env file.")
+		log.Fatal("DATABASE_URL is missing. Configure it in Render or .env.")
 	}
 
 	if cfg.Port == "" {
 		log.Fatal("PORT is missing.")
+	}
+
+	if len(cfg.AllowedOrigins) == 0 {
+		log.Fatal("ALLOWED_ORIGIN is missing. Configure your frontend origin.")
 	}
 
 	log.Println("Starting Geofencing Real-Time Alert System...")
@@ -69,17 +73,19 @@ func main() {
 
 	log.Println("Database migrations completed successfully.")
 
-	// Initialize WebSocket Hub.
-	hub := ws.NewHub()
+	// Initialize WebSocket Hub with allowed frontend origins.
+	hub := ws.NewHub(cfg.AllowedOrigins...)
+
+	// Start WebSocket Hub.
 	go hub.Run()
 
 	log.Println("WebSocket Hub started successfully.")
 
-	// Initialize application server.
+	// Initialize application handlers.
 	app := &handlers.Server{
 		DB:            db,
 		Hub:           hub,
-		AllowedOrigin: cfg.AllowedOrigin,
+		AllowedOrigin: cfg.AllowedOrigins[0],
 	}
 
 	// Configure HTTP server.
@@ -87,12 +93,14 @@ func main() {
 		Addr:              ":" + cfg.Port,
 		Handler:           app.Router(),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+
+		// Do not set WriteTimeout for long-lived WebSocket connections.
+		WriteTimeout: 0,
+
+		IdleTimeout: 60 * time.Second,
 	}
 
-	// Listen for termination signals.
+	// Listen for shutdown signals.
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -112,7 +120,7 @@ func main() {
 		}
 	}()
 
-	// Wait for shutdown signal or server error.
+	// Wait for shutdown signal or server failure.
 	select {
 	case <-ctx.Done():
 		log.Println("Shutdown signal received.")

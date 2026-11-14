@@ -20,8 +20,8 @@ import (
 )
 
 type Server struct {
-	DB            *pgxpool.Pool
-	Hub           *ws.Hub
+	  DB          *sql.DB
+    Hub           *websocket.Hub
 	AllowedOrigin string
 }
 

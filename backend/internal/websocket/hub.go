@@ -1,107 +1,202 @@
+
 package websocket
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
+	gorilla "github.com/gorilla/websocket"
 )
 
-type Hub struct {
-	clients    map[*websocket.Conn]bool
-	register   chan *websocket.Conn
-	unregister chan *websocket.Conn
-	broadcast  chan []byte
-	mu         sync.RWMutex
+const (
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = 50 * time.Second
+	maxMessageSize = 512
+)
+
+type Client struct {
+	hub  *Hub
+	conn *gorilla.Conn
+	send chan []byte
 }
 
-func NewHub() *Hub {
+type Hub struct {
+	clients    map[*Client]bool
+	register   chan *Client
+	unregister chan *Client
+	broadcast  chan []byte
+
+	allowedOrigins map[string]bool
+}
+
+func NewHub(origins ...string) *Hub {
+	allowed := make(map[string]bool)
+
+	for _, origin := range origins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin != "" {
+			allowed[origin] = true
+		}
+	}
+
 	return &Hub{
-		clients:    make(map[*websocket.Conn]bool),
-		register:   make(chan *websocket.Conn),
-		unregister: make(chan *websocket.Conn),
-		broadcast:  make(chan []byte),
+		clients:        make(map[*Client]bool),
+		register:       make(chan *Client, 32),
+		unregister:     make(chan *Client, 32),
+		broadcast:      make(chan []byte, 256),
+		allowedOrigins: allowed,
 	}
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Restrict origins in production
-	},
-}
-
+// Run manages all WebSocket clients.
+// Start this once when the application starts.
 func (h *Hub) Run() {
 	for {
 		select {
-		case conn := <-h.register:
-			h.mu.Lock()
-			h.clients[conn] = true
-			h.mu.Unlock()
+		case client := <-h.register:
+			h.clients[client] = true
 
-		case conn := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[conn]; ok {
-				delete(h.clients, conn)
-				conn.Close()
+		case client := <-h.unregister:
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				close(client.send)
 			}
-			h.mu.Unlock()
 
 		case message := <-h.broadcast:
-			h.mu.RLock()
-			for conn := range h.clients {
-				if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-					log.Println("WebSocket write error:", err)
-					go func(c *websocket.Conn) {
-						h.unregister <- c
-					}(conn)
+			for client := range h.clients {
+				select {
+				case client.send <- message:
+				default:
+					// Slow client: disconnect it.
+					delete(h.clients, client)
+					close(client.send)
 				}
 			}
-			h.mu.RUnlock()
 		}
 	}
 }
 
+// CheckOrigin validates the browser's WebSocket origin.
+func (h *Hub) checkOrigin(r *http.Request) bool {
+	origin := strings.TrimRight(
+		strings.TrimSpace(r.Header.Get("Origin")), "/",
+	)
+
+	if origin == "" {
+		return false
+	}
+
+	return h.allowedOrigins[origin]
+}
+
+// WebSocket upgrader.
+func (h *Hub) upgrader() *gorilla.Upgrader {
+    return &gorilla.Upgrader{
+        ReadBufferSize:  1024,
+        WriteBufferSize: 1024,
+        CheckOrigin:     h.checkOrigin,
+    }
+}
+
+// ServeHTTP handles incoming WebSocket connections.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("WebSocket upgrade error:", err)
-		return
-	}
+    conn, err := h.upgrader().Upgrade(w, r, nil)
+    if err != nil {
+        log.Printf("WebSocket upgrade error: %v", err)
+        return
+    }
 
-	h.mu.Lock()
-	h.clients[conn] = true
-	h.mu.Unlock()
+    client := &Client{
+        hub:  h,
+        conn: conn,
+        send: make(chan []byte, 256),
+    }
 
-	go func() {
-		defer func() {
-			h.mu.Lock()
-			delete(h.clients, conn)
-			h.mu.Unlock()
-			conn.Close()
-		}()
+    h.register <- client
 
-		conn.SetReadLimit(512)
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				break
-			}
-			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		}
-	}()
+    go client.writePump()
+    go client.readPump()
 }
 
+// Broadcast sends an alert to all connected clients.
 func (h *Hub) Broadcast(message any) {
-	// Marshal the alert message into JSON.
 	data, err := json.Marshal(message)
 	if err != nil {
-		log.Println("WebSocket JSON error:", err)
+		log.Printf("WebSocket JSON error: %v", err)
 		return
 	}
 
-	h.broadcast <- data
+	select {
+	case h.broadcast <- data:
+	default:
+		log.Println("WebSocket broadcast queue full; message dropped")
+	}
+}
+
+// readPump handles incoming messages and connection health.
+func (c *Client) readPump() {
+	defer func() {
+		c.hub.unregister <- c
+		c.conn.Close()
+	}()
+
+	c.conn.SetReadLimit(maxMessageSize)
+
+	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
+
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
+
+	for {
+		_, _, err := c.conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
+}
+
+// writePump sends messages and periodic ping frames.
+func (c *Client) writePump() {
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.send:
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+
+			if !ok {
+				_ = c.conn.WriteMessage(
+					gorilla.CloseMessage,
+					[]byte{},
+				)
+				return
+			}
+
+			if err := c.conn.WriteMessage(
+				gorilla.TextMessage,
+				message,
+			); err != nil {
+				return
+			}
+
+		case <-ticker.C:
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+
+			if err := c.conn.WriteMessage(
+				gorilla.PingMessage,
+				nil,
+			); err != nil {
+				return
+			}
+		}
+	}
 }
