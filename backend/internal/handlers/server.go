@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/geofence"
-	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/models"
-	ws "github.com/yourusername/geofencing-real-time-alert-system/backend/internal/websocket"
+	"github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/geofence"
+	"github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/models"
+	ws "github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/websocket"
 )
 
 type Server struct {

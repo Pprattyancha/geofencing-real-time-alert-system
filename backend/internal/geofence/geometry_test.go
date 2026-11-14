@@ -1,7 +1,7 @@
 package geofence
 
 import (
-	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/models"
+	"github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/models"
 	"testing"
 )
 

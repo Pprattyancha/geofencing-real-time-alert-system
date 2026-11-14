@@ -1,4 +1,3 @@
-
 package websocket
 
 import (
@@ -81,45 +80,68 @@ func (h *Hub) Run() {
 }
 
 // CheckOrigin validates the browser's WebSocket origin.
+
 func (h *Hub) checkOrigin(r *http.Request) bool {
 	origin := strings.TrimRight(
-		strings.TrimSpace(r.Header.Get("Origin")), "/",
+		strings.TrimSpace(r.Header.Get("Origin")),
+		"/",
 	)
 
 	if origin == "" {
+		log.Println("WebSocket rejected: missing Origin header")
 		return false
 	}
 
-	return h.allowedOrigins[origin]
+	if !h.allowedOrigins[origin] {
+		log.Printf(
+			"WebSocket rejected: origin %q not allowed. Allowed origins: %v",
+			origin,
+			h.allowedOrigins,
+		)
+		return false
+	}
+
+	log.Printf("WebSocket origin accepted: %s", origin)
+	return true
 }
 
 // WebSocket upgrader.
 func (h *Hub) upgrader() *gorilla.Upgrader {
-    return &gorilla.Upgrader{
-        ReadBufferSize:  1024,
-        WriteBufferSize: 1024,
-        CheckOrigin:     h.checkOrigin,
-    }
+	return &gorilla.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     h.checkOrigin,
+	}
 }
 
 // ServeHTTP handles incoming WebSocket connections.
+
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    conn, err := h.upgrader().Upgrade(w, r, nil)
-    if err != nil {
-        log.Printf("WebSocket upgrade error: %v", err)
-        return
-    }
+	log.Printf(
+		"WebSocket request: method=%s path=%s origin=%s",
+		r.Method,
+		r.URL.Path,
+		r.Header.Get("Origin"),
+	)
 
-    client := &Client{
-        hub:  h,
-        conn: conn,
-        send: make(chan []byte, 256),
-    }
+	conn, err := h.upgrader().Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v", err)
+		return
+	}
 
-    h.register <- client
+	log.Printf("WebSocket connected: %s", r.RemoteAddr)
 
-    go client.writePump()
-    go client.readPump()
+	client := &Client{
+		hub:  h,
+		conn: conn,
+		send: make(chan []byte, 256),
+	}
+
+	h.register <- client
+
+	go client.writePump()
+	go client.readPump()
 }
 
 // Broadcast sends an alert to all connected clients.

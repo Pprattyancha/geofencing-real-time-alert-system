@@ -1,4 +1,4 @@
-module github.com/yourusername/geofencing-real-time-alert-system/backend
+module github.com/Pprattyancha/geofencing-real-time-alert-system/backend
 
 go 1.25.0
 

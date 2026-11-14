@@ -7,19 +7,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
 
-	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/config"
-	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/database"
-	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/handlers"
-	ws "github.com/yourusername/geofencing-real-time-alert-system/backend/internal/websocket"
+	"github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/config"
+	"github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/database"
+	"github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/handlers"
+	ws "github.com/Pprattyancha/geofencing-real-time-alert-system/backend/internal/websocket"
 )
 
 func main() {
-	// Load .env file locally.
+	// Load .env locally. Render uses environment variables.
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: .env file not found. Using system environment variables.")
 	}
@@ -31,12 +32,14 @@ func main() {
 		log.Fatal("DATABASE_URL is missing. Configure it in Render or .env.")
 	}
 
+	// Render provides PORT automatically. Use 8080 locally if absent.
 	if cfg.Port == "" {
-		log.Fatal("PORT is missing.")
+		cfg.Port = "8080"
 	}
 
+	// Validate allowed frontend origins.
 	if len(cfg.AllowedOrigins) == 0 {
-		log.Fatal("ALLOWED_ORIGIN is missing. Configure your frontend origin.")
+		log.Fatal("ALLOWED_ORIGINS is missing. Configure your frontend origin.")
 	}
 
 	log.Println("Starting Geofencing Real-Time Alert System...")
@@ -53,7 +56,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
-
 	defer db.Close()
 
 	log.Println("Connected to PostgreSQL successfully.")
@@ -73,30 +75,44 @@ func main() {
 
 	log.Println("Database migrations completed successfully.")
 
-	// Initialize WebSocket Hub with allowed frontend origins.
-	hub := ws.NewHub(cfg.AllowedOrigins...)
+	// Normalize and validate frontend origins.
+	var allowedOrigins []string
+
+	for _, origin := range cfg.AllowedOrigins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+
+		if origin != "" {
+			allowedOrigins = append(allowedOrigins, origin)
+		}
+	}
+
+	if len(allowedOrigins) == 0 {
+		log.Fatal("No valid frontend origins configured in ALLOWED_ORIGINS.")
+	}
+
+	// Initialize WebSocket Hub.
+	hub := ws.NewHub(allowedOrigins...)
 	go hub.Run()
 
-	app := &handlers.Server{
-    DB:            db,
-    Hub:           hub,
-    AllowedOrigin: cfg.AllowedOrigins[0],
-	}
 	log.Println("WebSocket Hub started successfully.")
+
+	// Initialize application handlers.
+	app := &handlers.Server{
+		DB:            db,
+		Hub:           hub,
+		AllowedOrigin: allowedOrigins[0],
+	}
 
 	// Configure HTTP server.
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           app.Router(),
 		ReadHeaderTimeout: 5 * time.Second,
-
-		// Do not set WriteTimeout for long-lived WebSocket connections.
-		WriteTimeout: 0,
-
-		IdleTimeout: 60 * time.Second,
+		WriteTimeout:      0,
+		IdleTimeout:       60 * time.Second,
 	}
 
-	// Listen for shutdown signals.
+	// Handle shutdown signals.
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -104,9 +120,9 @@ func main() {
 	)
 	defer stop()
 
-	// Start HTTP server.
 	serverErrors := make(chan error, 1)
 
+	// Start HTTP server.
 	go func() {
 		log.Printf("API server listening on port %s", cfg.Port)
 
@@ -116,7 +132,7 @@ func main() {
 		}
 	}()
 
-	// Wait for shutdown signal or server failure.
+	// Wait for shutdown signal or server error.
 	select {
 	case <-ctx.Done():
 		log.Println("Shutdown signal received.")
