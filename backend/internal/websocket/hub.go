@@ -80,7 +80,6 @@ func (h *Hub) Run() {
 }
 
 // CheckOrigin validates the browser's WebSocket origin.
-
 func (h *Hub) checkOrigin(r *http.Request) bool {
 	origin := strings.TrimRight(
 		strings.TrimSpace(r.Header.Get("Origin")),
@@ -92,17 +91,25 @@ func (h *Hub) checkOrigin(r *http.Request) bool {
 		return false
 	}
 
-	if !h.allowedOrigins[origin] {
-		log.Printf(
-			"WebSocket rejected: origin %q not allowed. Allowed origins: %v",
-			origin,
-			h.allowedOrigins,
-		)
-		return false
+	allowedOrigins := map[string]bool{
+		"https://geofencing-real-time-alert-system-frontend-dz4m-54nwpgh2k.vercel.app": true,
+		"https://geofencing-real-time-git-1e38d4-prattyanchas-projects-4bd1d7b3.vercel.app": true,
+		"http://localhost:5173": true,
 	}
 
-	log.Printf("WebSocket origin accepted: %s", origin)
-	return true
+	// Check configured origins.
+	if h.allowedOrigins[origin] || allowedOrigins[origin] {
+		log.Printf("WebSocket origin accepted: %s", origin)
+		return true
+	}
+
+	log.Printf(
+		"WebSocket rejected: origin %q not allowed. Configured origins: %v",
+		origin,
+		h.allowedOrigins,
+	)
+
+	return false
 }
 
 // WebSocket upgrader.

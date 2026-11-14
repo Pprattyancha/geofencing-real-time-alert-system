@@ -25,7 +25,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/geofencing?sslmode=disable
+      DATABASE_URL=ppostgres://postgres:Ppp%40123@localhost:5433/geofence_db?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
