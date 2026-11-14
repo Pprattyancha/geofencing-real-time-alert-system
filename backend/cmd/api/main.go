@@ -75,18 +75,14 @@ func main() {
 
 	// Initialize WebSocket Hub with allowed frontend origins.
 	hub := ws.NewHub(cfg.AllowedOrigins...)
-
-	// Start WebSocket Hub.
 	go hub.Run()
 
-	log.Println("WebSocket Hub started successfully.")
-
-	// Initialize application handlers.
 	app := &handlers.Server{
-		DB:            db,
-		Hub:           hub,
-		AllowedOrigin: cfg.AllowedOrigins[0],
+    DB:            db,
+    Hub:           hub,
+    AllowedOrigin: cfg.AllowedOrigins[0],
 	}
+	log.Println("WebSocket Hub started successfully.")
 
 	// Configure HTTP server.
 	srv := &http.Server{

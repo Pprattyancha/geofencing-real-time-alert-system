@@ -14,52 +14,96 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/geofence"
 	"github.com/yourusername/geofencing-real-time-alert-system/backend/internal/models"
 	ws "github.com/yourusername/geofencing-real-time-alert-system/backend/internal/websocket"
 )
 
 type Server struct {
-	  DB          *sql.DB
-    Hub           *websocket.Hub
+	DB            *pgxpool.Pool
+	Hub           *ws.Hub
 	AllowedOrigin string
 }
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(cors)
+	r.Use(s.cors)
 
+	// Health check
 	r.Get("/health", s.health)
 
-	// WebSocket alerts endpoint
+	// WebSocket alerts
 	r.Get("/ws/alerts", s.Hub.ServeHTTP)
 
+	// Geofences
 	r.Post("/geofences", s.createGeofence)
 	r.Get("/geofences", s.listGeofences)
 
+	// Vehicles
 	r.Post("/vehicles", s.createVehicle)
 	r.Get("/vehicles", s.listVehicles)
 
+	// Vehicle locations
 	r.Post("/vehicles/location", s.updateLocation)
 	r.Get("/vehicles/location/{vehicle_id}", s.getLocation)
 
+	// Alerts
 	r.Post("/alerts/configure", s.configureAlert)
 	r.Get("/alerts", s.listAlerts)
 
+	// Violation history
 	r.Get("/violations/history", s.history)
 
 	return r
 }
-func cors(next http.Handler) http.Handler {
+func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		origin := strings.TrimRight(
+			strings.TrimSpace(r.Header.Get("Origin")),
+			"/",
+		)
+
+		allowedOrigin := strings.TrimRight(
+			strings.TrimSpace(s.AllowedOrigin),
+			"/",
+		)
+
+		if origin != "" && origin != allowedOrigin {
+			http.Error(
+				w,
+				"CORS origin not allowed",
+				http.StatusForbidden,
+			)
+			return
+		}
+
+		if origin != "" {
+			w.Header().Set(
+				"Access-Control-Allow-Origin",
+				allowedOrigin,
+			)
+			w.Header().Set("Vary", "Origin")
+		}
+
+		w.Header().Set(
+			"Access-Control-Allow-Methods",
+			"GET, POST, PUT, PATCH, DELETE, OPTIONS",
+		)
+
+		w.Header().Set(
+			"Access-Control-Allow-Headers",
+			"Content-Type, Authorization",
+		)
+
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
